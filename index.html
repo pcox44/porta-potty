@@ -36,11 +36,12 @@ button:hover { background: #ffc107; }
   color: #fff;
   background: gray;
   position: relative;
-  transition: transform 0.3s, box-shadow 0.3s;
+  transition: transform 0.3s, box-shadow 0.3s, background 0.3s;
   cursor: default;
 }
 .applicant.selected { box-shadow: 0 0 10px 3px #ff0000; transform: scale(1.3); animation: pulse 0.6s infinite alternate; }
 .applicant.skip { background: rgba(255,255,0,0.5); color: #000; }
+.applicant.best { background: green; color: #fff; }
 .applicant:hover::after {
   content: attr(data-tooltip);
   position: absolute;
@@ -61,18 +62,21 @@ button:hover { background: #ffc107; }
 #stats { margin-top: 20px; font-size: 1.1em; }
 #graph {
   margin-top: 20px;
-  height: 200px;
+  height: 300px;
   width: 90%;
-  max-width: 800px;
+  max-width: 900px;
   background: linear-gradient(to top, #111, #222);
   position: relative;
   margin-left: auto;
   margin-right: auto;
   border: 1px solid #fff;
+  padding-left: 40px; /* space for y-axis labels */
+  padding-bottom: 30px; /* space for x-axis labels */
 }
 .line { position: absolute; height: 2px; background: #ffce00; transform-origin: left center; }
 .labelPoint { position: absolute; color: #ffce00; font-size: 0.7em; transform: translate(-50%, -100%); }
-.axisLabel { position: absolute; color: #fff; font-size: 0.8em; }
+.axisLabel { position: absolute; color: #fff; font-size: 0.8em; font-weight: bold; }
+.tick { position: absolute; background: #fff; }
 </style>
 </head>
 <body>
@@ -132,7 +136,10 @@ function displayApplicants(arr, selectedIndex=-1, stopIndex=0){
     div.textContent=rank;
     div.dataset.tooltip=`Rank: ${rank}, Position: ${i+1}`;
     if(i<stopIndex) div.classList.add('skip');
-    if(i===selectedIndex) div.classList.add('selected');
+    if(i===selectedIndex) {
+      div.classList.add('selected');
+      if(rank===1) div.classList.add('best');
+    }
     applicantsDiv.appendChild(div);
   });
 }
@@ -209,27 +216,50 @@ function updateStats(successes=0, top5=0, trials=1){
 
 function updateGraph(){
   graphDiv.innerHTML='';
-  const w=graphDiv.clientWidth, h=graphDiv.clientHeight;
+  const w=graphDiv.clientWidth-40; // leave space for y-axis labels
+  const h=graphDiv.clientHeight-30; // leave space for x-axis labels
   const maxRank=Math.max(...averageRanks,1);
 
-  // axis labels
-  const xLabel=document.createElement('div');
-  xLabel.className='axisLabel';
-  xLabel.style.left='50%'; xLabel.style.bottom='0px';
-  xLabel.style.transform='translateX(-50%)';
-  xLabel.innerText='Trial #';
-  graphDiv.appendChild(xLabel);
+  // draw Y axis ticks and labels
+  const yTicks = 5;
+  for(let i=0;i<=yTicks;i++){
+    const yVal = maxRank*i/yTicks;
+    const yPos = h - (yVal/maxRank)*h;
+    const tick = document.createElement('div');
+    tick.className='tick';
+    tick.style.width='5px';
+    tick.style.height='1px';
+    tick.style.left='35px';
+    tick.style.top=yPos+'px';
+    graphDiv.appendChild(tick);
 
-  const yLabel=document.createElement('div');
-  yLabel.className='axisLabel';
-  yLabel.style.left='0px'; yLabel.style.top='0px';
-  yLabel.innerText='Avg Selected Rank (lower better)';
-  graphDiv.appendChild(yLabel);
+    const label = document.createElement('div');
+    label.className='axisLabel';
+    label.style.left='0px';
+    label.style.top=(yPos-7)+'px';
+    label.innerText=yVal.toFixed(1);
+    graphDiv.appendChild(label);
+  }
 
+  // draw X axis ticks and labels
+  const xTicks = Math.min(10, averageRanks.length);
+  for(let i=0;i<=xTicks;i++){
+    const xPos = (i/xTicks)*w+40;
+    const label = document.createElement('div');
+    label.className='axisLabel';
+    label.style.left=xPos+'px';
+    label.style.bottom='0px';
+    label.style.transform='translateX(-50%)';
+    const trialNum = Math.round(i/xTicks*(averageRanks.length-1)+1);
+    label.innerText = trialNum;
+    graphDiv.appendChild(label);
+  }
+
+  // plot the line
   for(let i=1;i<averageRanks.length;i++){
-    const x1=((i-1)/(averageRanks.length-1))*w;
+    const x1=((i-1)/(averageRanks.length-1))*w+40;
     const y1=h-(averageRanks[i-1]/maxRank)*h;
-    const x2=(i/(averageRanks.length-1))*w;
+    const x2=(i/(averageRanks.length-1))*w+40;
     const y2=h-(averageRanks[i]/maxRank)*h;
     const dx=x2-x1, dy=y2-y1;
     const length=Math.sqrt(dx*dx+dy*dy);
@@ -241,16 +271,6 @@ function updateGraph(){
     line.style.top=y1+'px';
     line.style.transform=`rotate(${angle}deg)`;
     graphDiv.appendChild(line);
-
-    // add label every 5 points
-    if(i % 5 === 0){
-      const label = document.createElement('div');
-      label.className='labelPoint';
-      label.style.left = x2+'px';
-      label.style.top = y2+'px';
-      label.innerText = averageRanks[i].toFixed(1);
-      graphDiv.appendChild(label);
-    }
   }
 }
 
