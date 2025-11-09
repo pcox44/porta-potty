@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Porta Potty Problem Simulator</title>
+<title>Porta Potty Simulator with Top K Probability</title>
 <style>
 body {
   font-family: 'Segoe UI', sans-serif;
@@ -15,7 +15,7 @@ body {
 h1 { margin-bottom: 10px; color: #ffce00; }
 p.description { margin: 0 0 20px; font-size: 1em; color: #ddd; }
 .controls { margin: 20px 0; }
-input[type=range] { width: 200px; }
+input[type=range], input[type=number] { width: 200px; }
 button { margin: 5px; padding: 8px 15px; font-weight: bold; cursor: pointer; border-radius: 5px; border: none; background: #ffce00; color: #000; }
 button:hover { background: #ffc107; }
 #applicants {
@@ -42,6 +42,7 @@ button:hover { background: #ffc107; }
 .applicant.selected { box-shadow: 0 0 10px 3px #ff0000; transform: scale(1.3); animation: pulse 0.6s infinite alternate; }
 .applicant.skip { background: rgba(255,255,0,0.5); color: #000; }
 .applicant.best { background: green; color: #fff; }
+.applicant.topK { background: orange; color: #fff; }
 .applicant:hover::after {
   content: attr(data-tooltip);
   position: absolute;
@@ -60,29 +61,22 @@ button:hover { background: #ffc107; }
   100% { transform: scale(1.5); box-shadow: 0 0 20px 6px #ff0000; }
 }
 #stats { margin-top: 20px; font-size: 1.1em; }
-#graph {
+#graphCanvas {
   margin-top: 20px;
-  height: 300px;
-  width: 90%;
-  max-width: 900px;
   background: linear-gradient(to top, #111, #222);
-  position: relative;
-  margin-left: auto;
-  margin-right: auto;
   border: 1px solid #fff;
-  padding-left: 40px; /* space for y-axis labels */
-  padding-bottom: 30px; /* space for x-axis labels */
 }
-.line { position: absolute; height: 2px; background: #ffce00; transform-origin: left center; }
-.labelPoint { position: absolute; color: #ffce00; font-size: 0.7em; transform: translate(-50%, -100%); }
-.axisLabel { position: absolute; color: #fff; font-size: 0.8em; font-weight: bold; }
-.tick { position: absolute; background: #fff; }
+#topKInfo {
+  margin-top: 10px;
+  font-size: 1em;
+  color: #00ff00;
+}
 </style>
 </head>
 <body>
 
-<h1>Porta Potty Problem Simulator</h1>
-<p class="description">A line of porta potties awaits! Each potty has a cleanliness ranking (1 = cleanest). You must pick one as you walk by, but you cannot return once skipped. Try different strategies and see how the 1/e rule performs.</p>
+<h1>Porta Potty Simulator</h1>
+<p class="description">Pick a porta potty as you walk by! You cannot return once skipped. Use the simulations below to see probabilities of selecting a top K potty.</p>
 
 <div class="controls">
   <label>Number of potties: <span id="numLabel">50</span></label><br>
@@ -93,15 +87,19 @@ button:hover { background: #ffc107; }
 
   <label><input type="checkbox" id="setE"> Set stop fraction to 1/e</label><br>
 
+  <label>Top k goal: <input type="number" id="topKInput" min="1" max="10" value="5"></label><br>
+
   <button onclick="runSimulation()">Run 1 Trial</button>
   <button onclick="runMultiple(100)">Run 100 Trials</button>
   <button onclick="runMultipleAnimated(100)">Animate 100 Trials</button>
-  <button onclick="resetGraph()">Reset</button>
+  <button onclick="resetAll()">Reset</button>
+  <button onclick="plotTopK()">Plot Top K Probability Curve</button>
 </div>
 
 <div id="applicants"></div>
 <div id="stats"></div>
-<div id="graph"></div>
+<div id="topKInfo"></div>
+<canvas id="graphCanvas" width="900" height="350"></canvas>
 
 <script>
 const applicantsDiv = document.getElementById('applicants');
@@ -110,14 +108,18 @@ const stopFractionInput = document.getElementById('stopFraction');
 const numLabel = document.getElementById('numLabel');
 const stopLabel = document.getElementById('stopLabel');
 const statsDiv = document.getElementById('stats');
-const graphDiv = document.getElementById('graph');
+const topKInput = document.getElementById('topKInput');
 const setECheckbox = document.getElementById('setE');
+const canvas = document.getElementById('graphCanvas');
+const ctx = canvas.getContext('2d');
+const topKInfoDiv = document.getElementById('topKInfo');
 
 numApplicantsInput.oninput = () => numLabel.textContent = numApplicantsInput.value;
 stopFractionInput.oninput = () => { stopLabel.textContent = stopFractionInput.value; setECheckbox.checked=false; };
 setECheckbox.onchange = () => { if(setECheckbox.checked){ stopFractionInput.value = (1/Math.E).toFixed(2); stopLabel.textContent = stopFractionInput.value; } };
 
 let averageRanks = [];
+let topKProbs = [];
 
 function createApplicants(n){
   const arr = Array.from({length:n}, (_,i)=>i+1);
@@ -128,7 +130,7 @@ function createApplicants(n){
   return arr;
 }
 
-function displayApplicants(arr, selectedIndex=-1, stopIndex=0){
+function displayApplicants(arr, selectedIndex=-1, stopIndex=0, topK=5){
   applicantsDiv.innerHTML='';
   arr.forEach((rank,i)=>{
     const div = document.createElement('div');
@@ -139,148 +141,212 @@ function displayApplicants(arr, selectedIndex=-1, stopIndex=0){
     if(i===selectedIndex) {
       div.classList.add('selected');
       if(rank===1) div.classList.add('best');
+      else if(rank <= topK) div.classList.add('topK');
     }
     applicantsDiv.appendChild(div);
   });
 }
 
 function runSingleTrial(n, stopFrac){
-  const applicants=createApplicants(n);
-  const stop=Math.floor(n*stopFrac);
-  let bestSeen=n+1;
-  let selectedIndex=-1;
+  const topK = parseInt(topKInput.value);
+  const applicants = createApplicants(n);
+  const stop = Math.floor(n*stopFrac);
+  let bestSeen = n+1;
+  let selectedIndex = -1;
   for(let i=0;i<n;i++){
     if(i<stop) bestSeen=Math.min(bestSeen, applicants[i]);
-    else if(applicants[i]<bestSeen){selectedIndex=i;break;}
+    else if(applicants[i]<bestSeen){selectedIndex=i; break;}
   }
   if(selectedIndex===-1) selectedIndex=n-1;
-  displayApplicants(applicants, selectedIndex, stop);
-  const selectedRank=applicants[selectedIndex];
-  const success = selectedRank===1?1:0;
-  return {selectedRank, success};
+  displayApplicants(applicants, selectedIndex, stop, topK);
+  const selectedRank = applicants[selectedIndex];
+  return {
+    selectedRank,
+    success: selectedRank===1?1:0,
+    topKSuccess: selectedRank <= topK?1:0
+  };
 }
 
 function runSimulation(){
-  const n=parseInt(numApplicantsInput.value);
-  const stopFrac=parseFloat(stopFractionInput.value);
-  const result=runSingleTrial(n, stopFrac);
+  const n = parseInt(numApplicantsInput.value);
+  const stopFrac = parseFloat(stopFractionInput.value);
+  const result = runSingleTrial(n, stopFrac);
   averageRanks.push(result.selectedRank);
-  updateStats();
-  updateGraph();
+  updateStats(result.success, result.topKSuccess, 1);
+  drawGraph();
 }
 
 function runMultiple(trials){
-  const n=parseInt(numApplicantsInput.value);
-  const stopFrac=parseFloat(stopFractionInput.value);
-  let cumulative=averageRanks.length > 0 ? averageRanks[averageRanks.length-1]*averageRanks.length : 0;
-  let successes=0;
-  let top5=0;
+  const n = parseInt(numApplicantsInput.value);
+  const stopFrac = parseFloat(stopFractionInput.value);
+  let cumulative = averageRanks.length > 0 ? averageRanks[averageRanks.length-1]*averageRanks.length : 0;
+  let successes = 0;
+  let topKSuccess = 0;
   for(let i=0;i<trials;i++){
-    const res=runSingleTrial(n, stopFrac);
-    cumulative+=res.selectedRank;
+    const res = runSingleTrial(n, stopFrac);
+    cumulative += res.selectedRank;
     averageRanks.push(cumulative/(averageRanks.length));
-    successes+=res.success;
-    if(res.selectedRank<=5) top5++;
+    successes += res.success;
+    topKSuccess += res.topKSuccess;
   }
-  updateStats(successes, top5, trials);
-  updateGraph();
+  updateStats(successes, topKSuccess, trials);
+  drawGraph();
 }
 
 async function runMultipleAnimated(trials){
-  const n=parseInt(numApplicantsInput.value);
-  const stopFrac=parseFloat(stopFractionInput.value);
-  let cumulative=averageRanks.length > 0 ? averageRanks[averageRanks.length-1]*averageRanks.length : 0;
-  let successes=0;
-  let top5=0;
+  const n = parseInt(numApplicantsInput.value);
+  const stopFrac = parseFloat(stopFractionInput.value);
+  let cumulative = averageRanks.length > 0 ? averageRanks[averageRanks.length-1]*averageRanks.length : 0;
+  let successes = 0;
+  let topKSuccess = 0;
   for(let i=0;i<trials;i++){
-    const res=runSingleTrial(n, stopFrac);
-    cumulative+=res.selectedRank;
+    const res = runSingleTrial(n, stopFrac);
+    cumulative += res.selectedRank;
     averageRanks.push(cumulative/(averageRanks.length));
-    successes+=res.success;
-    if(res.selectedRank<=5) top5++;
-    updateStats(successes, top5, i+1);
-    updateGraph();
+    successes += res.success;
+    topKSuccess += res.topKSuccess;
+    updateStats(successes, topKSuccess, i+1);
+    drawGraph();
     await new Promise(r=>setTimeout(r,20));
   }
 }
 
-function updateStats(successes=0, top5=0, trials=1){
+function updateStats(successes=0, topKSuccess=0, trials=1){
   const last = averageRanks[averageRanks.length-1] || 0;
+  const topK = parseInt(topKInput.value);
   statsDiv.innerHTML=`
     Average selected rank: ${last.toFixed(2)}<br>
-    Success rate (cleanest selected): ${successes}/${trials} (${(successes/trials*100).toFixed(2)}%)<br>
-    Top 5 clean selections: ${top5}/${trials}<br>
+    Success rate (#1 selected): ${successes}/${trials} (${(successes/trials*100).toFixed(2)}%)<br>
+    Top ${topK} success rate: ${topKSuccess}/${trials} (${(topKSuccess/trials*100).toFixed(2)}%)<br>
     Stop fraction: ${stopFractionInput.value} 
   `;
 }
 
-function updateGraph(){
-  graphDiv.innerHTML='';
-  const w=graphDiv.clientWidth-40; // leave space for y-axis labels
-  const h=graphDiv.clientHeight-30; // leave space for x-axis labels
-  const maxRank=Math.max(...averageRanks,1);
+// ---- Top K probability plotting ----
+function plotTopK(){
+  const n = parseInt(numApplicantsInput.value);
+  const topK = parseInt(topKInput.value);
+  const trialsPerR = 500;
+  const fractions = [];
+  for(let r=0.05;r<=0.95;r+=0.05) fractions.push(parseFloat(r.toFixed(2)));
+  topKProbs = [];
+  topKInfoDiv.innerHTML = 'Calculating probabilities...';
+  let idx=0;
+  function next(){
+    if(idx>=fractions.length){
+      drawGraph();
+      // find fraction with max probability
+      let maxP = Math.max(...topKProbs.map(p=>p.prob));
+      let maxFrac = topKProbs.find(p=>p.prob===maxP).frac;
+      topKInfoDiv.innerHTML = `Max Top ${topK} chance: ${(maxP*100).toFixed(2)}% at stop fraction ${maxFrac.toFixed(2)} | 1/e ≈ 0.37`;
+      return;
+    }
+    const r = fractions[idx];
+    let topKSuccess = 0;
+    for(let t=0;t<trialsPerR;t++){
+      const res = runSingleTrial(n,r);
+      topKSuccess += res.topKSuccess;
+    }
+    topKProbs.push({frac:r, prob: topKSuccess/trialsPerR});
+    idx++;
+    setTimeout(next,20);
+  }
+  next();
+}
 
-  // draw Y axis ticks and labels
+function drawGraph(){
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0,0,w,h);
+  const padding = 50;
+  const graphWidth = w - padding*2;
+  const graphHeight = h - padding*2;
+
+  // axes
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padding,padding);
+  ctx.lineTo(padding,h-padding);
+  ctx.lineTo(w-padding,h-padding);
+  ctx.stroke();
+
+  // Y-axis labels 0-100%
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
   const yTicks = 5;
   for(let i=0;i<=yTicks;i++){
-    const yVal = maxRank*i/yTicks;
-    const yPos = h - (yVal/maxRank)*h;
-    const tick = document.createElement('div');
-    tick.className='tick';
-    tick.style.width='5px';
-    tick.style.height='1px';
-    tick.style.left='35px';
-    tick.style.top=yPos+'px';
-    graphDiv.appendChild(tick);
-
-    const label = document.createElement('div');
-    label.className='axisLabel';
-    label.style.left='0px';
-    label.style.top=(yPos-7)+'px';
-    label.innerText=yVal.toFixed(1);
-    graphDiv.appendChild(label);
+    const yVal = i/yTicks;
+    const y = h-padding - yVal*graphHeight;
+    ctx.beginPath();
+    ctx.moveTo(padding-5,y);
+    ctx.lineTo(padding,y);
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.fillText((yVal*100).toFixed(0)+'%', padding-10, y);
   }
 
-  // draw X axis ticks and labels
-  const xTicks = Math.min(10, averageRanks.length);
+  // X-axis labels (stop fraction)
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  const xTicks = Math.min(10, topKProbs.length);
   for(let i=0;i<=xTicks;i++){
-    const xPos = (i/xTicks)*w+40;
-    const label = document.createElement('div');
-    label.className='axisLabel';
-    label.style.left=xPos+'px';
-    label.style.bottom='0px';
-    label.style.transform='translateX(-50%)';
-    const trialNum = Math.round(i/xTicks*(averageRanks.length-1)+1);
-    label.innerText = trialNum;
-    graphDiv.appendChild(label);
+    const xIndex = Math.round(i/xTicks*(topKProbs.length-1));
+    const x = padding + (xIndex/(topKProbs.length-1))*graphWidth;
+    const frac = topKProbs[xIndex].frac;
+    ctx.beginPath();
+    ctx.moveTo(x,h-padding);
+    ctx.lineTo(x,h-padding+5);
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.fillText(frac.toFixed(2), x, h-padding+7);
   }
 
-  // plot the line
-  for(let i=1;i<averageRanks.length;i++){
-    const x1=((i-1)/(averageRanks.length-1))*w+40;
-    const y1=h-(averageRanks[i-1]/maxRank)*h;
-    const x2=(i/(averageRanks.length-1))*w+40;
-    const y2=h-(averageRanks[i]/maxRank)*h;
-    const dx=x2-x1, dy=y2-y1;
-    const length=Math.sqrt(dx*dx+dy*dy);
-    const angle=Math.atan2(dy,dx)*180/Math.PI;
-    const line=document.createElement('div');
-    line.className='line';
-    line.style.width=length+'px';
-    line.style.left=x1+'px';
-    line.style.top=y1+'px';
-    line.style.transform=`rotate(${angle}deg)`;
-    graphDiv.appendChild(line);
+  // Y-axis label
+  ctx.save();
+  ctx.translate(15,h/2);
+  ctx.rotate(-Math.PI/2);
+  ctx.textAlign='center';
+  ctx.textBaseline='middle';
+  ctx.fillText('Chance of Top K Selection',0,0);
+  ctx.restore();
+
+  // X-axis label
+  ctx.fillText('Stop After Fraction', w/2, h-10);
+
+  // plot green line
+  if(topKProbs.length>0){
+    ctx.strokeStyle = '#00ff00';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    topKProbs.forEach((p,i)=>{
+      const x = padding + (i/(topKProbs.length-1))*graphWidth;
+      const y = h-padding - p.prob*graphHeight;
+      if(i===0) ctx.moveTo(x,y);
+      else ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+
+    // draw vertical 1/e line
+    const xe = padding + (0.3679*(graphWidth));
+    ctx.strokeStyle = '#ff0000';
+    ctx.setLineDash([5,5]);
+    ctx.beginPath();
+    ctx.moveTo(xe,padding);
+    ctx.lineTo(xe,h-padding);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 }
 
-function resetGraph(){
-  graphDiv.innerHTML='';
-  statsDiv.innerHTML='';
+function resetAll(){
   averageRanks=[];
+  topKProbs=[];
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  statsDiv.innerHTML='';
+  topKInfoDiv.innerHTML='';
   applicantsDiv.innerHTML='';
 }
 </script>
-
 </body>
 </html>
