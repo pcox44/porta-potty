@@ -91,7 +91,6 @@ button:hover { background: #ffc107; }
 
   <button onclick="runSimulation()">Run 1 Trial</button>
   <button onclick="runMultiple(100)">Run 100 Trials</button>
-  <button onclick="runMultipleAnimated(100)">Animate 100 Trials</button>
   <button onclick="resetAll()">Reset</button>
   <button onclick="plotTopK()">Plot Top K Probability Curve</button>
 </div>
@@ -193,24 +192,6 @@ function runMultiple(trials){
   drawGraph();
 }
 
-async function runMultipleAnimated(trials){
-  const n = parseInt(numApplicantsInput.value);
-  const stopFrac = parseFloat(stopFractionInput.value);
-  let cumulative = averageRanks.length > 0 ? averageRanks[averageRanks.length-1]*averageRanks.length : 0;
-  let successes = 0;
-  let topKSuccess = 0;
-  for(let i=0;i<trials;i++){
-    const res = runSingleTrial(n, stopFrac);
-    cumulative += res.selectedRank;
-    averageRanks.push(cumulative/(averageRanks.length));
-    successes += res.success;
-    topKSuccess += res.topKSuccess;
-    updateStats(successes, topKSuccess, i+1);
-    drawGraph();
-    await new Promise(r=>setTimeout(r,20));
-  }
-}
-
 function updateStats(successes=0, topKSuccess=0, trials=1){
   const last = averageRanks[averageRanks.length-1] || 0;
   const topK = parseInt(topKInput.value);
@@ -226,7 +207,7 @@ function updateStats(successes=0, topKSuccess=0, trials=1){
 function plotTopK(){
   const n = parseInt(numApplicantsInput.value);
   const topK = parseInt(topKInput.value);
-  const trialsPerR = 500;
+  const trialsPerR = 500; // can adjust for speed
   const fractions = [];
   for(let r=0.01; r<=0.99; r+=0.01) fractions.push(parseFloat(r.toFixed(2)));
   topKProbs = [];
@@ -238,7 +219,7 @@ function plotTopK(){
       // find fraction with max probability
       let maxP = Math.max(...topKProbs.map(p=>p.prob));
       let maxFrac = topKProbs.find(p=>p.prob===maxP).frac;
-      topKInfoDiv.innerHTML = `Max Top ${topK} chance: ${(maxP*100).toFixed(2)}% at stop fraction ${maxFrac.toFixed(2)} | 1/e ≈ 0.37`;
+      topKInfoDiv.innerHTML = `Max Top ${topK} chance: ${(maxP*100).toFixed(2)}% at stop fraction ≈ ${maxFrac.toFixed(2)}`;
       return;
     }
     const r = fractions[idx];
@@ -249,7 +230,7 @@ function plotTopK(){
     }
     topKProbs.push({frac:r, prob: topKSuccess/trialsPerR});
     idx++;
-    setTimeout(next,20);
+    setTimeout(next,10);
   }
   next();
 }
@@ -286,14 +267,14 @@ function drawGraph(){
     ctx.fillText((yVal*100).toFixed(0)+'%', padding-10, y);
   }
 
-  // X-axis labels (stop fraction)
+  // X-axis labels
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  const xTicks = Math.min(10, topKProbs.length);
+  const xTicks = 10;
   for(let i=0;i<=xTicks;i++){
     const xIndex = Math.round(i/xTicks*(topKProbs.length-1));
     const x = padding + (xIndex/(topKProbs.length-1))*graphWidth;
-    const frac = topKProbs[xIndex].frac;
+    const frac = topKProbs[xIndex]?.frac || 0;
     ctx.beginPath();
     ctx.moveTo(x,h-padding);
     ctx.lineTo(x,h-padding+5);
@@ -327,15 +308,22 @@ function drawGraph(){
     });
     ctx.stroke();
 
-    // draw vertical 1/e line
-    const xe = padding + (0.3679*(graphWidth));
-    ctx.strokeStyle = '#ff0000';
-    ctx.setLineDash([5,5]);
+    // vertical line at max probability
+    const maxP = Math.max(...topKProbs.map(p=>p.prob));
+    const maxFrac = topKProbs.find(p=>p.prob===maxP).frac;
+    const xMax = padding + (maxFrac*(graphWidth));
+    ctx.strokeStyle = '#ff00ff';
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(xe,padding);
-    ctx.lineTo(xe,h-padding);
+    ctx.moveTo(xMax,padding);
+    ctx.lineTo(xMax,h-padding);
     ctx.stroke();
-    ctx.setLineDash([]);
+
+    // label vertical line
+    ctx.fillStyle = '#ff00ff';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(`Max: ${(maxP*100).toFixed(1)}% at ${maxFrac.toFixed(2)}`, xMax+5,padding+5);
   }
 }
 
