@@ -228,7 +228,7 @@ function plotTopK(){
   const topK = parseInt(topKInput.value);
   const trialsPerR = 500;
   const fractions = [];
-  for(let r=0.05;r<=0.95;r+=0.05) fractions.push(parseFloat(r.toFixed(2)));
+  for(let r=0.01; r<=0.99; r+=0.01) fractions.push(parseFloat(r.toFixed(2)));
   topKProbs = [];
   topKInfoDiv.innerHTML = 'Calculating probabilities...';
   let idx=0;
